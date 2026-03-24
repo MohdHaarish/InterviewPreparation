@@ -4,14 +4,19 @@ const CX = 260, CY = 215, R = 155;
 const PRIORITY_COLOR = { CRITICAL: "#ef4444", HIGH: "#f59e0b", MEDIUM: "#10b981" };
 
 const store = {
-  async get(key) {
-    try { if (window.storage) { const r = await window.storage.get(key); return r ? JSON.parse(r.value) : null; } } catch {}
-    try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : null; } catch { return null; }
+  async get(_key) {
+    try {
+      const res = await fetch('/api/progress');
+      if (res.ok) return await res.json();
+    } catch {}
+    try { const v = localStorage.getItem(_key); return v ? JSON.parse(v) : null; } catch { return null; }
   },
-  async set(key, value) {
-    const str = JSON.stringify(value);
-    try { if (window.storage) { await window.storage.set(key, str); return; } } catch {}
-    try { localStorage.setItem(key, str); } catch {}
+  async set(_key, value) {
+    try {
+      await fetch('/api/progress', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) });
+      return;
+    } catch {}
+    try { localStorage.setItem(_key, JSON.stringify(value)); } catch {}
   }
 };
 
