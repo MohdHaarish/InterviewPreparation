@@ -44,8 +44,8 @@ function buildTheme(mode, hex) {
 // ── Storage ───────────────────────────────────────────────────────────────
 var SKEY = "sde3-v7";
 var store = {
-  get: async function(k) { try { if (window.storage) { var r = await window.storage.get(k); return r ? JSON.parse(r.value) : null; } } catch(e) {} try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch(e) { return null; } },
-  set: async function(k, v) { var s = JSON.stringify(v); try { if (window.storage) { await window.storage.set(k, s); return; } } catch(e) {} try { localStorage.setItem(k, s); } catch(e) {} }
+  get: async function(_k) { try { var res = await fetch('/api/progress'); if (res.ok) return await res.json(); } catch(e) {} try { var v = localStorage.getItem(_k); return v ? JSON.parse(v) : null; } catch(e) { return null; } },
+  set: async function(_k, v) { try { await fetch('/api/progress', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(v) }); return; } catch(e) {} try { localStorage.setItem(_k, JSON.stringify(v)); } catch(e) {} }
 };
 
 // ── ALL STUDY DATA ────────────────────────────────────────────────────────
