@@ -1,0 +1,107 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1774774034488,
+  "projectRoot": "c:\\Users\\haari\\Projects\\ClaudeCode\\InterviewPreparation",
+  "techStack": {
+    "languages": [],
+    "frameworks": [],
+    "packageManager": null,
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": null,
+    "lintCommand": null,
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [],
+    "gitBranches": {
+      "defaultBranch": "main",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "sde3-prep": {
+      "path": "sde3-prep",
+      "purpose": null,
+      "fileCount": 11,
+      "lastAccessed": 1774774034461,
+      "keyFiles": [
+        "eslint.config.js",
+        "generate-pin-hash.js",
+        "index.html",
+        "notes.db",
+        "package-lock.json"
+      ]
+    },
+    "sde3-prep\\data": {
+      "path": "sde3-prep\\data",
+      "purpose": "Data files",
+      "fileCount": 0,
+      "lastAccessed": 1774774034462,
+      "keyFiles": []
+    },
+    "sde3-prep\\dist": {
+      "path": "sde3-prep\\dist",
+      "purpose": "Distribution/build output",
+      "fileCount": 3,
+      "lastAccessed": 1774774034463,
+      "keyFiles": [
+        "favicon.svg",
+        "icons.svg",
+        "index.html"
+      ]
+    },
+    "sde3-prep\\node_modules": {
+      "path": "sde3-prep\\node_modules",
+      "purpose": "Dependencies",
+      "fileCount": 1,
+      "lastAccessed": 1774774034464,
+      "keyFiles": []
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "sde3-prep\\src\\App.jsx",
+      "accessCount": 7,
+      "lastAccessed": 1774774251473,
+      "type": "directory"
+    },
+    {
+      "path": "sde3-prep\\server.js",
+      "accessCount": 1,
+      "lastAccessed": 1774774099750,
+      "type": "file"
+    },
+    {
+      "path": "sde3-prep\\package.json",
+      "accessCount": 1,
+      "lastAccessed": 1774774167321,
+      "type": "file"
+    },
+    {
+      "path": "",
+      "accessCount": 1,
+      "lastAccessed": 1774774167608,
+      "type": "directory"
+    },
+    {
+      "path": "sde3-prep\\vite.config.js",
+      "accessCount": 1,
+      "lastAccessed": 1774774172118,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}

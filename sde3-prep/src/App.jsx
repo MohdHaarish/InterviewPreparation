@@ -44,8 +44,8 @@ function buildTheme(mode, hex) {
 // ── Storage ───────────────────────────────────────────────────────────────
 var SKEY = "sde3-v7";
 var store = {
-  get: async function(_k) { try { var res = await fetch('/api/progress'); if (res.ok) return await res.json(); } catch(e) {} try { var v = localStorage.getItem(_k); return v ? JSON.parse(v) : null; } catch(e) { return null; } },
-  set: async function(_k, v) { try { await fetch('/api/progress', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(v) }); return; } catch(e) {} try { localStorage.setItem(_k, JSON.stringify(v)); } catch(e) {} }
+  get: async function(_k) { try { var res = await fetch('/api/progress'); if (res.ok) { var data = await res.json(); if (data !== null && data !== undefined) return data; } } catch(e) {} try { var v = localStorage.getItem(_k); return v ? JSON.parse(v) : null; } catch(e) { return null; } },
+  set: async function(_k, v) { try { var res = await fetch('/api/progress', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(v) }); if (res.ok) { try { localStorage.setItem(_k, JSON.stringify(v)); } catch(e) {} return; } } catch(e) {} try { localStorage.setItem(_k, JSON.stringify(v)); } catch(e) {} }
 };
 
 // ── ALL STUDY DATA ────────────────────────────────────────────────────────
@@ -462,7 +462,7 @@ var NODES = [
 var CX = 260, CY = 215, R = 155;
 var GEDGES = [["system","distributed"],["system","database"],["system","patterns"],["distributed","database"],["distributed","patterns"],["dsa","system"],["language","distributed"],["behavioral","system"]];
 var PRICOLORS = { CRITICAL:"#ef4444", HIGH:"#f59e0b", MEDIUM:"#10b981" };
-var STABS = [{id:"why",label:"❓ WHY",col:"#ef4444"},{id:"what",label:"📖 WHAT",col:"#3b82f6"},{id:"how",label:"⚙️ HOW",col:"#f59e0b"},{id:"example",label:"💡 Example",col:"#10b981"},{id:"code",label:"💻 Code",col:"#8b5cf6"}];
+var STABS = [{id:"why",label:"❓ WHY",col:"#ef4444"},{id:"what",label:"📖 WHAT",col:"#3b82f6"},{id:"how",label:"⚙️ HOW",col:"#f59e0b"},{id:"example",label:"💡 Example",col:"#10b981"},{id:"code",label:"💻 Code",col:"#8b5cf6"},{id:"notes",label:"📝 Notes",col:"#0891b2"}];
 
 function svgPos(deg) {
   var rad = (deg * Math.PI) / 180;
@@ -510,9 +510,137 @@ function CodeBlock(props) {
   );
 }
 
+// ── NoteEditor ────────────────────────────────────────────────────────────
+function NoteEditor(props) {
+  var topicId = props.topicId, T = props.T, nc = props.nc;
+  var isAuthenticated = props.isAuthenticated, token = props.token, onOpenAuthModal = props.onOpenAuthModal;
+  var statusState = React.useState('idle'), status = statusState[0], setStatus = statusState[1];
+  var editorRef = React.useRef(null);
+  var timerRef  = React.useRef(null);
+  var savedRangeRef = React.useRef(null);
+
+  React.useEffect(function() {
+    if (!isAuthenticated || !editorRef.current) return;
+    setStatus('loading');
+    fetch('/api/notes/' + encodeURIComponent(topicId), {
+      headers: { 'Authorization': 'Bearer ' + token }
+    }).then(function(r) {
+      if (r.status === 404) return { content: '' };
+      if (!r.ok) throw new Error('load');
+      return r.json();
+    }).then(function(data) {
+      if (editorRef.current) editorRef.current.innerHTML = data.content || '';
+      setStatus('idle');
+    }).catch(function() { setStatus('idle'); });
+  }, [isAuthenticated, topicId, token]);
+
+  function doSave() {
+    if (!editorRef.current) return;
+    var html = editorRef.current.innerHTML;
+    fetch('/api/notes/' + encodeURIComponent(topicId), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ content: html })
+    }).then(function(r) {
+      if (!r.ok) throw new Error('save');
+      setStatus('saved');
+      setTimeout(function() { setStatus('idle'); }, 2000);
+    }).catch(function() { setStatus('error'); });
+  }
+
+  function handleInput() {
+    clearTimeout(timerRef.current);
+    setStatus('saving');
+    timerRef.current = setTimeout(doSave, 1500);
+  }
+
+  function execCmd(cmd, val) {
+    if (editorRef.current) editorRef.current.focus();
+    document.execCommand(cmd, false, val || null);
+  }
+
+  function insertLink() {
+    var url = prompt('Enter URL:');
+    if (!url) return;
+    if (editorRef.current) editorRef.current.focus();
+    document.execCommand('createLink', false, url);
+    if (editorRef.current) {
+      var links = editorRef.current.querySelectorAll('a[href="' + url + '"]');
+      links.forEach(function(a) { a.target = '_blank'; a.rel = 'noopener noreferrer'; });
+    }
+    handleInput();
+  }
+
+  function handleImageChange(e) {
+    var file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { alert('Image must be under 5MB'); return; }
+    setStatus('uploading');
+    var formData = new FormData();
+    formData.append('image', file);
+    fetch('/api/notes/images/upload', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token },
+      body: formData
+    }).then(function(r) {
+      if (!r.ok) throw new Error('upload');
+      return r.json();
+    }).then(function(data) {
+      var imgHtml = '<img src="' + data.url + '" style="max-width:100%;border-radius:8px;margin:8px 0;" />';
+      if (savedRangeRef.current && editorRef.current) {
+        editorRef.current.focus();
+        var sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(savedRangeRef.current);
+        document.execCommand('insertHTML', false, imgHtml);
+      } else if (editorRef.current) {
+        editorRef.current.innerHTML += imgHtml;
+      }
+      handleInput();
+    }).catch(function() { setStatus('error'); alert('Upload failed'); });
+  }
+
+  var btnS = { padding:'4px 9px', fontSize:11, cursor:'pointer', borderRadius:5, background:T.muted, border:'1px solid ' + T.border, color:T.text2, fontFamily:'inherit', fontWeight:700, lineHeight:'1.4' };
+
+  if (!isAuthenticated) {
+    return React.createElement('div', { style:{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', minHeight:160, gap:10 } },
+      React.createElement('div', { style:{ fontSize:13, color:T.text2 } }, 'Enter PIN to sync notes'),
+      React.createElement('button', { onClick:onOpenAuthModal, style:{ padding:'7px 18px', cursor:'pointer', borderRadius:6, background:nc, border:'none', color:'#fff', fontFamily:'inherit', fontSize:12, fontWeight:600 } }, '🔐 Sign In')
+    );
+  }
+
+  return React.createElement('div', null,
+    React.createElement('div', { style:{ display:'flex', gap:4, flexWrap:'wrap', marginBottom:8, padding:'6px 8px', background:T.card, borderRadius:8, border:'1px solid ' + T.border } },
+      React.createElement('button', { onMouseDown:function(e){ e.preventDefault(); execCmd('bold'); }, style:Object.assign({}, btnS, { fontWeight:900 }) }, 'B'),
+      React.createElement('button', { onMouseDown:function(e){ e.preventDefault(); execCmd('italic'); }, style:Object.assign({}, btnS, { fontStyle:'italic' }) }, 'I'),
+      React.createElement('button', { onMouseDown:function(e){ e.preventDefault(); execCmd('formatBlock','h3'); }, style:btnS }, 'H3'),
+      React.createElement('button', { onMouseDown:function(e){ e.preventDefault(); execCmd('insertUnorderedList'); }, style:btnS }, '• List'),
+      React.createElement('button', { onMouseDown:function(e){ e.preventDefault(); insertLink(); }, style:btnS }, '🔗 Link'),
+      React.createElement('label', { style:Object.assign({}, btnS, { display:'inline-flex', alignItems:'center', gap:3, cursor:'pointer' }),
+        onMouseDown:function() { var sel = window.getSelection(); if (sel && sel.rangeCount > 0) savedRangeRef.current = sel.getRangeAt(0).cloneRange(); }
+      },
+        '🖼 Image',
+        React.createElement('input', { type:'file', accept:'image/*', style:{ display:'none' }, onChange:handleImageChange })
+      )
+    ),
+    React.createElement('div', {
+      ref: editorRef,
+      contentEditable: true,
+      suppressContentEditableWarning: true,
+      onInput: handleInput,
+      style:{ minHeight:200, padding:'14px 16px', borderRadius:8, background:T.card, color:T.text, border:'1.5px solid ' + T.border, fontSize:13, lineHeight:1.8, outline:'none', wordBreak:'break-word' }
+    }),
+    React.createElement('div', { style:{ fontSize:11, marginTop:6, color: status === 'error' ? '#ef4444' : status === 'saved' ? '#10b981' : T.text3 } },
+      status === 'loading' ? 'Loading...' : status === 'saving' ? 'Saving...' : status === 'uploading' ? 'Uploading...' : status === 'saved' ? 'Saved ✓' : status === 'error' ? 'Save failed' : ''
+    )
+  );
+}
+
 // ── ConceptCard ───────────────────────────────────────────────────────────
 function ConceptCard(props) {
   var concept = props.concept, done = props.done, onToggle = props.onToggle, nc = props.nc, T = props.T;
+  var isAuthenticated = props.isAuthenticated, token = props.token, onOpenAuthModal = props.onOpenAuthModal, nodeId = props.nodeId;
   var openState = useState(false), open = openState[0], setOpen = openState[1];
   var subState = useState("why"), sub = subState[0], setSub = subState[1];
 
@@ -542,15 +670,15 @@ function ConceptCard(props) {
           }, t.label);
         })
       ),
-      React.createElement("div", { style: { padding:"14px 16px", borderTop:"1px solid " + T.border, fontSize:13, lineHeight:1.8, color:T.text2, whiteSpace:"pre-wrap" } },
-        sub === "why" ? concept.why : sub === "what" ? concept.what : sub === "how" ? concept.how : sub === "example" ? concept.example : sub === "code" && concept.code ? React.createElement(CodeBlock, { code:concept.code, T:T }) : null
+      React.createElement("div", { style: { padding:"14px 16px", borderTop:"1px solid " + T.border, fontSize:13, lineHeight:1.8, color:T.text2, whiteSpace: sub === "notes" ? "normal" : "pre-wrap" } },
+        sub === "why" ? concept.why : sub === "what" ? concept.what : sub === "how" ? concept.how : sub === "example" ? concept.example : sub === "code" && concept.code ? React.createElement(CodeBlock, { code:concept.code, T:T }) : sub === "notes" ? React.createElement(NoteEditor, { topicId: nodeId + "_" + concept.term, T:T, nc:nc, isAuthenticated:isAuthenticated, token:token, onOpenAuthModal:onOpenAuthModal }) : null
       ),
-      React.createElement("div", { style: { padding:"0 16px 14px", display:"flex", justifyContent:"flex-end" } },
+      sub !== "notes" ? React.createElement("div", { style: { padding:"0 16px 14px", display:"flex", justifyContent:"flex-end" } },
         React.createElement("button", {
           onClick: onToggle,
           style: { padding:"6px 14px", fontSize:11, cursor:"pointer", borderRadius:6, background:done?T.muted:nc, border:done?"1px solid " + T.border2:"none", color:done?T.text3:"#fff", fontFamily:"inherit", fontWeight:600 }
         }, done ? "↩ Mark unread" : "✓ Mark understood")
-      )
+      ) : null
     ) : null
   );
 }
@@ -568,6 +696,14 @@ export default function App() {
   var readyState = useState(false), ready = readyState[0], setReady = readyState[1];
   var rstState = useState(false), showReset = rstState[0], setShowReset = rstState[1];
 
+  // ── Auth state ──────────────────────────────────────────────────────────
+  var tkState  = useState(function() { return localStorage.getItem('sde3_auth_token') || null; }), token = tkState[0], setToken = tkState[1];
+  var authState = useState(false), isAuthenticated = authState[0], setIsAuthenticated = authState[1];
+  var authModalState = useState(false), showAuthModal = authModalState[0], setShowAuthModal = authModalState[1];
+  var pinState = useState(''), pinInput = pinState[0], setPinInput = pinState[1];
+  var authErrState = useState(''), authError = authErrState[0], setAuthError = authErrState[1];
+  var authLoadState = useState(false), authLoading = authLoadState[0], setAuthLoading = authLoadState[1];
+
   useEffect(function() {
     store.get(SKEY).then(function(saved) {
       if (saved) setProg(mergeProg(initProg(), saved));
@@ -575,6 +711,25 @@ export default function App() {
     });
   }, []);
   useEffect(function() { if (ready) store.set(SKEY, prog); }, [prog, ready]);
+
+  // Verify stored token on load
+  useEffect(function() {
+    var t = localStorage.getItem('sde3_auth_token');
+    if (!t) return;
+    fetch('/api/auth/verify', { headers: { 'Authorization': 'Bearer ' + t } })
+      .then(function(r) { if (r.ok) setIsAuthenticated(true); else { localStorage.removeItem('sde3_auth_token'); setToken(null); } })
+      .catch(function() {});
+  }, []);
+
+  var openAuthModal = useCallback(function() { setShowAuthModal(true); setPinInput(''); setAuthError(''); }, []);
+  var handleLogin = useCallback(function(pin) {
+    setAuthLoading(true);
+    fetch('/api/auth/login', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ pin: pin }) })
+      .then(function(r) { if (!r.ok) throw new Error('bad'); return r.json(); })
+      .then(function(d) { localStorage.setItem('sde3_auth_token', d.token); setToken(d.token); setIsAuthenticated(true); setShowAuthModal(false); setAuthLoading(false); })
+      .catch(function() { setAuthError('Invalid PIN'); setAuthLoading(false); });
+  }, []);
+  var handleLogout = useCallback(function() { localStorage.removeItem('sde3_auth_token'); setToken(null); setIsAuthenticated(false); }, []);
 
   var toggleConcept = useCallback(function(nid, term) {
     setProg(function(p) { var nc2 = Object.assign({}, p[nid].c); nc2[term] = !nc2[term]; return Object.assign({}, p, { [nid]: Object.assign({}, p[nid], { c: nc2 }) }); });
@@ -649,10 +804,20 @@ export default function App() {
                 {T.nc.map(function(c, i) { return <div key={i} style={{ width:13, height:13, borderRadius:3, background:c, flexShrink:0 }} />; })}
               </div>
             )}
-            <button onClick={function() { setShowReset(true); }}
-              style={{ padding:"4px 10px", fontSize:10, cursor:"pointer", borderRadius:5, background:T.muted, border:"1px solid " + T.border2, color:T.text3, fontFamily:"inherit", alignSelf:"flex-end" }}>
-              ↺ Reset
-            </button>
+            <div style={{ display:"flex", gap:6, alignSelf:"flex-end" }}>
+              <button onClick={function() { setShowReset(true); }}
+                style={{ padding:"4px 10px", fontSize:10, cursor:"pointer", borderRadius:5, background:T.muted, border:"1px solid " + T.border2, color:T.text3, fontFamily:"inherit" }}>
+                ↺ Reset
+              </button>
+              {isAuthenticated ? (
+                <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                  <span style={{ fontSize:10, color:"#10b981", fontWeight:600 }}>Notes ✓</span>
+                  <button onClick={handleLogout} style={{ padding:"4px 10px", fontSize:10, cursor:"pointer", borderRadius:5, background:T.muted, border:"1px solid " + T.border2, color:T.text3, fontFamily:"inherit" }}>Sign Out</button>
+                </div>
+              ) : (
+                <button onClick={openAuthModal} style={{ padding:"4px 10px", fontSize:10, cursor:"pointer", borderRadius:5, background:T.muted, border:"1px solid " + T.border2, color:T.text3, fontFamily:"inherit" }}>🔐 Notes Login</button>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -670,6 +835,36 @@ export default function App() {
               </button>
               <button onClick={function() { setShowReset(false); }}
                 style={{ padding:"7px 18px", cursor:"pointer", borderRadius:6, background:T.muted, border:"1px solid " + T.border2, color:T.text3, fontFamily:"inherit", fontSize:12 }}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PIN AUTH MODAL */}
+      {showAuthModal && (
+        <div style={{ position:"fixed", inset:0, background:T.isDark?"rgba(0,0,0,0.75)":"rgba(15,23,42,0.4)", zIndex:999, display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <div style={{ background:T.card, border:"1px solid " + T.border, borderRadius:12, padding:"26px 30px", textAlign:"center", maxWidth:320, width:"90%" }}>
+            <div style={{ fontSize:16, fontWeight:700, color:T.text, marginBottom:6 }}>🔐 Notes Sign In</div>
+            <div style={{ fontSize:12, color:T.text3, marginBottom:18, lineHeight:1.6 }}>Enter your PIN to sync notes across devices.</div>
+            <input
+              type="password"
+              placeholder="Enter PIN"
+              value={pinInput}
+              onChange={function(e) { setPinInput(e.target.value); setAuthError(''); }}
+              onKeyDown={function(e) { if (e.key === 'Enter' && pinInput) handleLogin(pinInput); }}
+              autoFocus
+              style={{ width:"100%", padding:"9px 12px", fontSize:13, borderRadius:7, border:"1.5px solid " + (authError ? "#ef4444" : T.border), background:T.bg, color:T.text, outline:"none", fontFamily:"inherit", marginBottom: authError ? 6 : 16, boxSizing:"border-box" }}
+            />
+            {authError && <div style={{ fontSize:11, color:"#ef4444", marginBottom:12 }}>{authError}</div>}
+            <div style={{ display:"flex", gap:10, justifyContent:"center" }}>
+              <button onClick={function() { if (pinInput) handleLogin(pinInput); }} disabled={authLoading}
+                style={{ padding:"8px 22px", cursor:"pointer", borderRadius:6, background:T.accent, border:"none", color:"#fff", fontFamily:"inherit", fontSize:13, fontWeight:600, opacity:authLoading?0.7:1 }}>
+                {authLoading ? "Signing in…" : "Sign In"}
+              </button>
+              <button onClick={function() { setShowAuthModal(false); }}
+                style={{ padding:"8px 16px", cursor:"pointer", borderRadius:6, background:T.muted, border:"1px solid " + T.border2, color:T.text3, fontFamily:"inherit", fontSize:12 }}>
                 Cancel
               </button>
             </div>
@@ -839,7 +1034,8 @@ export default function App() {
                     {node.concepts.map(function(concept) {
                       return (
                         <ConceptCard key={concept.term} concept={concept} done={!!prog[node.id].c[concept.term]}
-                          onToggle={function() { toggleConcept(node.id, concept.term); }} nc={nc} T={T} />
+                          onToggle={function() { toggleConcept(node.id, concept.term); }} nc={nc} T={T}
+                          nodeId={node.id} isAuthenticated={isAuthenticated} token={token} onOpenAuthModal={openAuthModal} />
                       );
                     })}
                   </div>

@@ -2,6 +2,11 @@
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
+Before pasting, two quick setup items on your server:
+
+1. Run node generate-pin-hash.js yourSecretPin (Claude Code will create this script) and paste the hash into server/.env
+2. Add the Nginx reverse proxy snippet (Step 9 output) to your existing server block for prep.haarishnaim.in
+
 Currently, two official plugins are available:
 
 - [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
