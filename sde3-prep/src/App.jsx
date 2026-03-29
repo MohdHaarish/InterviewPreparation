@@ -511,7 +511,21 @@ var NODES = [
 var CX = 260, CY = 215, R = 155;
 var GEDGES = [["system","distributed"],["system","database"],["system","patterns"],["distributed","database"],["distributed","patterns"],["dsa","system"],["language","distributed"],["behavioral","system"]];
 var PRICOLORS = { CRITICAL:"#ef4444", HIGH:"#f59e0b", MEDIUM:"#10b981" };
-var STABS = [{id:"why",label:"❓ WHY",col:"#ef4444"},{id:"what",label:"📖 WHAT",col:"#3b82f6"},{id:"how",label:"⚙️ HOW",col:"#f59e0b"},{id:"example",label:"💡 Example",col:"#10b981"},{id:"code",label:"💻 Code",col:"#8b5cf6"},{id:"notes",label:"📝 Notes",col:"#0891b2"}];
+var STABS = [{id:"why",label:"❓ WHY",col:"#ef4444"},{id:"what",label:"📖 WHAT",col:"#3b82f6"},{id:"how",label:"⚙️ HOW",col:"#f59e0b"},{id:"example",label:"💡 Example",col:"#10b981"},{id:"code",label:"💻 Code",col:"#8b5cf6"}];
+
+// ── Time helper ───────────────────────────────────────────────────────────
+function timeAgo(dateStr) {
+  var now = Date.now(), then = new Date(dateStr).getTime(), diff = Math.floor((now - then) / 1000);
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return Math.floor(diff/60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
+  if (diff < 86400*7) return Math.floor(diff/86400) + 'd ago';
+  var d = new Date(dateStr);
+  return d.toLocaleDateString('en-US', { month:'short', day:'numeric', year: d.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined });
+}
+
+// ── Per-topic notes cache: topicId → { notes, loaded } ───────────────────
+var notesCache = {};
 
 function svgPos(deg) {
   var rad = (deg * Math.PI) / 180;
@@ -559,130 +573,190 @@ function CodeBlock(props) {
   );
 }
 
-// ── NoteEditor ────────────────────────────────────────────────────────────
-function NoteEditor(props) {
+// ── NotesSection ──────────────────────────────────────────────────────────
+function NotesSection(props) {
   var topicId = props.topicId, T = props.T, nc = props.nc;
   var isAuthenticated = props.isAuthenticated, token = props.token, onOpenAuthModal = props.onOpenAuthModal;
-  var statusState = React.useState('idle'), status = statusState[0], setStatus = statusState[1];
-  var editorRef = React.useRef(null);
-  var timerRef  = React.useRef(null);
-  var savedRangeRef = React.useRef(null);
 
+  var notesState = React.useState(null), notes = notesState[0], setNotes = notesState[1];
+  var loadingState = React.useState(false), loading = loadingState[0], setLoading = loadingState[1];
+  var composerState = React.useState(false), composerOpen = composerState[0], setComposerOpen = composerState[1];
+  var composerRef = React.useRef(null);
+  var savedRangeRef = React.useRef(null);
+  var uploadStatusState = React.useState(''), uploadStatus = uploadStatusState[0], setUploadStatus = uploadStatusState[1];
+  var savingState = React.useState(false), saving = savingState[0], setSaving = savingState[1];
+  var confirmDeleteState = React.useState(null), confirmDelete = confirmDeleteState[0], setConfirmDelete = confirmDeleteState[1];
+
+  // Load notes once when first mounted (authenticated)
   React.useEffect(function() {
-    if (!isAuthenticated || !editorRef.current) return;
-    setStatus('loading');
-    fetch('/api/notes/' + encodeURIComponent(topicId), {
-      headers: { 'Authorization': 'Bearer ' + token }
-    }).then(function(r) {
-      if (r.status === 404) return { content: '' };
-      if (!r.ok) throw new Error('load');
-      return r.json();
-    }).then(function(data) {
-      if (editorRef.current) editorRef.current.innerHTML = data.content || '';
-      setStatus('idle');
-    }).catch(function() { setStatus('idle'); });
+    if (!isAuthenticated || notes !== null) return;
+    if (notesCache[topicId]) { setNotes(notesCache[topicId]); return; }
+    setLoading(true);
+    fetch('/api/notes/' + encodeURIComponent(topicId), { headers: { 'Authorization': 'Bearer ' + token } })
+      .then(function(r) { if (!r.ok) throw new Error('load'); return r.json(); })
+      .then(function(d) { notesCache[topicId] = d.notes || []; setNotes(notesCache[topicId]); setLoading(false); })
+      .catch(function() { setNotes([]); setLoading(false); });
   }, [isAuthenticated, topicId, token]);
 
-  function doSave() {
-    if (!editorRef.current) return;
-    var html = editorRef.current.innerHTML;
-    fetch('/api/notes/' + encodeURIComponent(topicId), {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-      body: JSON.stringify({ content: html })
-    }).then(function(r) {
-      if (!r.ok) throw new Error('save');
-      setStatus('saved');
-      setTimeout(function() { setStatus('idle'); }, 2000);
-    }).catch(function() { setStatus('error'); });
-  }
-
-  function handleInput() {
-    clearTimeout(timerRef.current);
-    setStatus('saving');
-    timerRef.current = setTimeout(doSave, 1500);
-  }
-
   function execCmd(cmd, val) {
-    if (editorRef.current) editorRef.current.focus();
+    if (composerRef.current) composerRef.current.focus();
     document.execCommand(cmd, false, val || null);
   }
 
   function insertLink() {
     var url = prompt('Enter URL:');
     if (!url) return;
-    if (editorRef.current) editorRef.current.focus();
+    if (composerRef.current) composerRef.current.focus();
     document.execCommand('createLink', false, url);
-    if (editorRef.current) {
-      var links = editorRef.current.querySelectorAll('a[href="' + url + '"]');
-      links.forEach(function(a) { a.target = '_blank'; a.rel = 'noopener noreferrer'; });
+    if (composerRef.current) {
+      composerRef.current.querySelectorAll('a[href="' + url + '"]').forEach(function(a) { a.target = '_blank'; a.rel = 'noopener noreferrer'; });
     }
-    handleInput();
   }
 
   function handleImageChange(e) {
-    var file = e.target.files[0];
-    e.target.value = '';
+    var file = e.target.files[0]; e.target.value = '';
     if (!file) return;
-    if (file.size > 5 * 1024 * 1024) { alert('Image must be under 5MB'); return; }
-    setStatus('uploading');
-    var formData = new FormData();
-    formData.append('image', file);
-    fetch('/api/notes/images/upload', {
+    if (file.size > 5 * 1024 * 1024) { setUploadStatus('Image must be under 5MB'); setTimeout(function() { setUploadStatus(''); }, 3000); return; }
+    setUploadStatus('Uploading...');
+    var fd = new FormData(); fd.append('image', file);
+    fetch('/api/notes/images/upload', { method:'POST', headers:{ 'Authorization':'Bearer ' + token }, body: fd })
+      .then(function(r) { if (!r.ok) throw new Error('upload'); return r.json(); })
+      .then(function(d) {
+        var img = '<img src="' + d.url + '" style="max-width:100%;border-radius:8px;margin:8px 0;box-shadow:0 2px 8px rgba(0,0,0,0.15);" />';
+        if (savedRangeRef.current && composerRef.current) {
+          composerRef.current.focus();
+          var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(savedRangeRef.current);
+          document.execCommand('insertHTML', false, img);
+        } else if (composerRef.current) { composerRef.current.innerHTML += img; }
+        setUploadStatus('');
+      })
+      .catch(function() { setUploadStatus('Upload failed'); setTimeout(function() { setUploadStatus(''); }, 3000); });
+  }
+
+  function saveNote() {
+    if (!composerRef.current) return;
+    var el = composerRef.current;
+    var html = el.innerHTML.trim();
+    var hasText = el.textContent.trim().length > 0;
+    var hasImg  = !!el.querySelector('img');
+    if (!html || (!hasText && !hasImg)) return;
+    setSaving(true);
+    fetch('/api/notes/' + encodeURIComponent(topicId), {
       method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + token },
-      body: formData
-    }).then(function(r) {
-      if (!r.ok) throw new Error('upload');
-      return r.json();
-    }).then(function(data) {
-      var imgHtml = '<img src="' + data.url + '" style="max-width:100%;border-radius:8px;margin:8px 0;" />';
-      if (savedRangeRef.current && editorRef.current) {
-        editorRef.current.focus();
-        var sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(savedRangeRef.current);
-        document.execCommand('insertHTML', false, imgHtml);
-      } else if (editorRef.current) {
-        editorRef.current.innerHTML += imgHtml;
-      }
-      handleInput();
-    }).catch(function() { setStatus('error'); alert('Upload failed'); });
+      headers: { 'Content-Type':'application/json', 'Authorization':'Bearer ' + token },
+      body: JSON.stringify({ content: html })
+    })
+      .then(function(r) { if (!r.ok) throw new Error('save'); return r.json(); })
+      .then(function(note) {
+        var updated = [note].concat(notes || []);
+        notesCache[topicId] = updated;
+        setNotes(updated);
+        setComposerOpen(false);
+        if (composerRef.current) composerRef.current.innerHTML = '';
+        setSaving(false);
+      })
+      .catch(function() { setSaving(false); });
   }
 
-  var btnS = { padding:'4px 9px', fontSize:11, cursor:'pointer', borderRadius:5, background:T.muted, border:'1px solid ' + T.border, color:T.text2, fontFamily:'inherit', fontWeight:700, lineHeight:'1.4' };
-
-  if (!isAuthenticated) {
-    return React.createElement('div', { style:{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', minHeight:160, gap:10 } },
-      React.createElement('div', { style:{ fontSize:13, color:T.text2 } }, 'Enter PIN to sync notes'),
-      React.createElement('button', { onClick:onOpenAuthModal, style:{ padding:'7px 18px', cursor:'pointer', borderRadius:6, background:nc, border:'none', color:'#fff', fontFamily:'inherit', fontSize:12, fontWeight:600 } }, '🔐 Sign In')
-    );
+  function deleteNote(id) {
+    fetch('/api/notes/' + id, { method:'DELETE', headers:{ 'Authorization':'Bearer ' + token } })
+      .then(function(r) { if (!r.ok) throw new Error('del'); return r.json(); })
+      .then(function() {
+        var updated = (notes || []).filter(function(n) { return n.id !== id; });
+        notesCache[topicId] = updated;
+        setNotes(updated);
+        setConfirmDelete(null);
+      })
+      .catch(function() { setConfirmDelete(null); });
   }
 
-  return React.createElement('div', null,
-    React.createElement('div', { style:{ display:'flex', gap:4, flexWrap:'wrap', marginBottom:8, padding:'6px 8px', background:T.card, borderRadius:8, border:'1px solid ' + T.border } },
-      React.createElement('button', { onMouseDown:function(e){ e.preventDefault(); execCmd('bold'); }, style:Object.assign({}, btnS, { fontWeight:900 }) }, 'B'),
-      React.createElement('button', { onMouseDown:function(e){ e.preventDefault(); execCmd('italic'); }, style:Object.assign({}, btnS, { fontStyle:'italic' }) }, 'I'),
-      React.createElement('button', { onMouseDown:function(e){ e.preventDefault(); execCmd('formatBlock','h3'); }, style:btnS }, 'H3'),
-      React.createElement('button', { onMouseDown:function(e){ e.preventDefault(); execCmd('insertUnorderedList'); }, style:btnS }, '• List'),
-      React.createElement('button', { onMouseDown:function(e){ e.preventDefault(); insertLink(); }, style:btnS }, '🔗 Link'),
-      React.createElement('label', { style:Object.assign({}, btnS, { display:'inline-flex', alignItems:'center', gap:3, cursor:'pointer' }),
-        onMouseDown:function() { var sel = window.getSelection(); if (sel && sel.rangeCount > 0) savedRangeRef.current = sel.getRangeAt(0).cloneRange(); }
-      },
-        '🖼 Image',
-        React.createElement('input', { type:'file', accept:'image/*', style:{ display:'none' }, onChange:handleImageChange })
-      )
+  var tbtnS = { padding:'3px 8px', fontSize:11, cursor:'pointer', borderRadius:4, background:T.muted, border:'1px solid ' + T.border, color:T.text2, fontFamily:'inherit', fontWeight:700, lineHeight:'1.5', transition:'background 0.15s' };
+
+  var noteList = notes || [];
+
+  return React.createElement('div', { style:{ borderTop:'1.5px solid ' + T.border, marginTop:4 } },
+    // ── Section header ──
+    React.createElement('div', { style:{ display:'flex', alignItems:'center', gap:8, padding:'10px 16px 6px' } },
+      React.createElement('span', { style:{ fontSize:13, fontWeight:700, color:T.text2 } }, '📝 My Notes'),
+      noteList.length > 0 ? React.createElement('span', { style:{ fontSize:10, fontWeight:700, padding:'1px 7px', borderRadius:10, background:nc+'22', color:nc, border:'1px solid ' + nc+'44' } }, noteList.length) : null,
+      React.createElement('div', { style:{ flex:1 } }),
+      isAuthenticated
+        ? React.createElement('button', {
+            onClick: function() { setComposerOpen(!composerOpen); },
+            style:{ padding:'4px 11px', fontSize:11, cursor:'pointer', borderRadius:6, background:composerOpen ? T.muted : nc, border:composerOpen ? '1px solid ' + T.border : 'none', color:composerOpen ? T.text3 : '#fff', fontFamily:'inherit', fontWeight:600, transition:'all 0.15s' }
+          }, composerOpen ? '✕ Cancel' : '+ Add Note')
+        : React.createElement('button', { onClick:onOpenAuthModal, style:{ fontSize:11, color:T.text3, background:'none', border:'none', cursor:'pointer', textDecoration:'underline', fontFamily:'inherit' } }, '🔐 Unlock to add notes')
     ),
-    React.createElement('div', {
-      ref: editorRef,
-      contentEditable: true,
-      suppressContentEditableWarning: true,
-      onInput: handleInput,
-      style:{ minHeight:200, padding:'14px 16px', borderRadius:8, background:T.card, color:T.text, border:'1.5px solid ' + T.border, fontSize:13, lineHeight:1.8, outline:'none', wordBreak:'break-word' }
-    }),
-    React.createElement('div', { style:{ fontSize:11, marginTop:6, color: status === 'error' ? '#ef4444' : status === 'saved' ? '#10b981' : T.text3 } },
-      status === 'loading' ? 'Loading...' : status === 'saving' ? 'Saving...' : status === 'uploading' ? 'Uploading...' : status === 'saved' ? 'Saved ✓' : status === 'error' ? 'Save failed' : ''
-    )
+
+    // ── Composer ──
+    composerOpen ? React.createElement('div', { style:{ margin:'0 12px 10px', borderRadius:8, border:'1.5px solid ' + nc+'66', background:T.card, overflow:'hidden', animation:'slideDown 0.2s ease' } },
+      // toolbar
+      React.createElement('div', { style:{ display:'flex', gap:3, padding:'6px 8px', borderBottom:'1px solid ' + T.border, flexWrap:'wrap' } },
+        React.createElement('button', { onMouseDown:function(e){ e.preventDefault(); execCmd('bold'); }, style:Object.assign({}, tbtnS, { fontWeight:900 }) }, 'B'),
+        React.createElement('button', { onMouseDown:function(e){ e.preventDefault(); execCmd('italic'); }, style:Object.assign({}, tbtnS, { fontStyle:'italic' }) }, 'I'),
+        React.createElement('button', { onMouseDown:function(e){ e.preventDefault(); execCmd('insertUnorderedList'); }, style:tbtnS }, '• List'),
+        React.createElement('button', { onMouseDown:function(e){ e.preventDefault(); insertLink(); }, style:tbtnS }, '🔗 Link'),
+        React.createElement('label', { style:Object.assign({}, tbtnS, { display:'inline-flex', alignItems:'center', gap:2, cursor:'pointer' }),
+          onMouseDown:function() { var s = window.getSelection(); if (s && s.rangeCount > 0) savedRangeRef.current = s.getRangeAt(0).cloneRange(); }
+        }, '📷 Image', React.createElement('input', { type:'file', accept:'image/*', style:{ display:'none' }, onChange:handleImageChange })),
+        uploadStatus ? React.createElement('span', { style:{ fontSize:11, color: uploadStatus.includes('fail') || uploadStatus.includes('must') ? '#ef4444' : T.text3, marginLeft:4, alignSelf:'center' } }, uploadStatus) : null
+      ),
+      // editor
+      React.createElement('div', {
+        ref: composerRef,
+        contentEditable: true,
+        suppressContentEditableWarning: true,
+        style:{ minHeight:100, padding:'10px 14px', fontSize:13, lineHeight:1.6, color:T.text, outline:'none', wordBreak:'break-word' },
+        'data-placeholder': 'Write a note...',
+        onFocus: function(e) { if (!e.target.innerHTML) e.target.style.setProperty('--ph-opacity','0'); },
+      }),
+      // actions
+      React.createElement('div', { style:{ display:'flex', justifyContent:'flex-end', gap:8, padding:'6px 10px', borderTop:'1px solid ' + T.border } },
+        React.createElement('button', { onClick:function() { setComposerOpen(false); if (composerRef.current) composerRef.current.innerHTML=''; }, style:{ padding:'5px 12px', fontSize:12, cursor:'pointer', background:'none', border:'none', color:T.text3, fontFamily:'inherit' } }, 'Cancel'),
+        React.createElement('button', { onClick:saveNote, disabled:saving, style:{ padding:'5px 14px', fontSize:12, cursor:'pointer', borderRadius:6, background:nc, border:'none', color:'#fff', fontFamily:'inherit', fontWeight:600, opacity:saving?0.7:1 } }, saving ? 'Saving...' : 'Save')
+      )
+    ) : null,
+
+    // ── Notes list ──
+    loading ? React.createElement('div', { style:{ padding:'10px 16px', fontSize:12, color:T.text3 } }, 'Loading notes...') :
+    noteList.length === 0 && !composerOpen
+      ? React.createElement('div', { style:{ padding:'12px 16px 14px', textAlign:'center', color:T.text3, fontSize:12 } },
+          React.createElement('div', { style:{ fontSize:20, marginBottom:4, opacity:0.4 } }, '📭'),
+          'No notes yet'
+        )
+      : React.createElement('div', { style:{ padding:'0 12px 12px', display:'flex', flexDirection:'column', gap:8 } },
+          noteList.map(function(note) {
+            return React.createElement('div', {
+              key: note.id,
+              style:{ background:T.muted, border:'1px solid ' + T.border, borderRadius:8, padding:'10px 12px', position:'relative', animation:'slideDown 0.2s ease' }
+            },
+              // content
+              React.createElement('div', {
+                style:{ fontSize:13, lineHeight:1.6, color:T.text, wordBreak:'break-word' },
+                dangerouslySetInnerHTML:{ __html: note.content }
+              }),
+              // footer
+              React.createElement('div', { style:{ display:'flex', alignItems:'center', marginTop:6, gap:8 } },
+                React.createElement('span', { style:{ fontSize:11, color:T.text3 } }, timeAgo(note.created_at)),
+                React.createElement('div', { style:{ flex:1 } }),
+                confirmDelete === note.id
+                  ? React.createElement('span', { style:{ fontSize:11, color:T.text2 } },
+                      'Delete? ',
+                      React.createElement('button', { onClick:function() { deleteNote(note.id); }, style:{ fontSize:11, cursor:'pointer', background:'none', border:'none', color:'#ef4444', fontFamily:'inherit', fontWeight:700, padding:'0 2px' } }, 'Yes'),
+                      ' · ',
+                      React.createElement('button', { onClick:function() { setConfirmDelete(null); }, style:{ fontSize:11, cursor:'pointer', background:'none', border:'none', color:T.text3, fontFamily:'inherit', padding:'0 2px' } }, 'No')
+                    )
+                  : React.createElement('button', {
+                      onClick: function() { setConfirmDelete(note.id); },
+                      title: 'Delete note',
+                      style:{ background:'none', border:'1px solid ' + T.border, cursor:'pointer', fontSize:12, opacity:0.6, padding:'2px 7px', borderRadius:4, transition:'opacity 0.15s', lineHeight:1, color:T.text3 },
+                      onMouseEnter:function(e){ e.currentTarget.style.opacity='1'; },
+                      onMouseLeave:function(e){ e.currentTarget.style.opacity='0.6'; }
+                    }, '🗑 Delete')
+              )
+            );
+          })
+        )
   );
 }
 
@@ -694,6 +768,7 @@ function ConceptCard(props) {
   var subState = useState("why"), sub = subState[0], setSub = subState[1];
 
   var avail = STABS.filter(function(t) { return t.id !== "code" || (concept.code && concept.code.trim().length > 0); });
+
 
   return React.createElement("div", { style: { marginBottom:10 } },
     React.createElement("div", {
@@ -719,15 +794,16 @@ function ConceptCard(props) {
           }, t.label);
         })
       ),
-      React.createElement("div", { style: { padding:"14px 16px", borderTop:"1px solid " + T.border, fontSize:13, lineHeight:1.8, color:T.text2, whiteSpace: sub === "notes" ? "normal" : "pre-wrap" } },
-        sub === "why" ? concept.why : sub === "what" ? concept.what : sub === "how" ? concept.how : sub === "example" ? concept.example : sub === "code" && concept.code ? React.createElement(CodeBlock, { code:concept.code, T:T }) : sub === "notes" ? React.createElement(NoteEditor, { topicId: nodeId + "_" + concept.term, T:T, nc:nc, isAuthenticated:isAuthenticated, token:token, onOpenAuthModal:onOpenAuthModal }) : null
+      React.createElement("div", { style: { padding:"14px 16px", borderTop:"1px solid " + T.border, fontSize:13, lineHeight:1.8, color:T.text2, whiteSpace:"pre-wrap" } },
+        sub === "why" ? concept.why : sub === "what" ? concept.what : sub === "how" ? concept.how : sub === "example" ? concept.example : sub === "code" && concept.code ? React.createElement(CodeBlock, { code:concept.code, T:T }) : null
       ),
-      sub !== "notes" ? React.createElement("div", { style: { padding:"0 16px 14px", display:"flex", justifyContent:"flex-end" } },
+      React.createElement("div", { style: { padding:"0 16px 14px", display:"flex", justifyContent:"flex-end" } },
         React.createElement("button", {
           onClick: onToggle,
           style: { padding:"6px 14px", fontSize:11, cursor:"pointer", borderRadius:6, background:done?T.muted:nc, border:done?"1px solid " + T.border2:"none", color:done?T.text3:"#fff", fontFamily:"inherit", fontWeight:600 }
         }, done ? "↩ Mark unread" : "✓ Mark understood")
-      ) : null
+      ),
+      React.createElement(NotesSection, { topicId: nodeId + "_" + concept.term, T:T, nc:nc, isAuthenticated:isAuthenticated, token:token, onOpenAuthModal:onOpenAuthModal })
     ) : null
   );
 }

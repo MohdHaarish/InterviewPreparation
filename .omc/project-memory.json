@@ -74,14 +74,26 @@
   "hotPaths": [
     {
       "path": "sde3-prep\\src\\App.jsx",
-      "accessCount": 12,
-      "lastAccessed": 1774776125853,
+      "accessCount": 38,
+      "lastAccessed": 1774791830686,
       "type": "directory"
     },
     {
       "path": "sde3-prep\\server.js",
+      "accessCount": 4,
+      "lastAccessed": 1774778485413,
+      "type": "file"
+    },
+    {
+      "path": "",
       "accessCount": 3,
-      "lastAccessed": 1774776064046,
+      "lastAccessed": 1774791085845,
+      "type": "directory"
+    },
+    {
+      "path": "sde3-prep\\src\\index.css",
+      "accessCount": 2,
+      "lastAccessed": 1774791104408,
       "type": "file"
     },
     {
@@ -89,12 +101,6 @@
       "accessCount": 1,
       "lastAccessed": 1774774167321,
       "type": "file"
-    },
-    {
-      "path": "",
-      "accessCount": 1,
-      "lastAccessed": 1774774167608,
-      "type": "directory"
     },
     {
       "path": "sde3-prep\\vite.config.js",
