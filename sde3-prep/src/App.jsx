@@ -43,9 +43,58 @@ function buildTheme(mode, hex) {
 
 // ── Storage ───────────────────────────────────────────────────────────────
 var SKEY = "sde3-v7";
+function clog(tag, msg, extra) {
+  var ts = new Date().toISOString();
+  if (extra !== undefined) console.log('[' + ts + '] [' + tag + ']', msg, extra);
+  else console.log('[' + ts + '] [' + tag + ']', msg);
+}
 var store = {
-  get: async function(_k) { try { var res = await fetch('/api/progress'); if (res.ok) { var data = await res.json(); if (data !== null && data !== undefined) return data; } } catch(e) {} try { var v = localStorage.getItem(_k); return v ? JSON.parse(v) : null; } catch(e) { return null; } },
-  set: async function(_k, v) { try { var res = await fetch('/api/progress', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(v) }); if (res.ok) { try { localStorage.setItem(_k, JSON.stringify(v)); } catch(e) {} return; } } catch(e) {} try { localStorage.setItem(_k, JSON.stringify(v)); } catch(e) {} }
+  get: async function(_k) {
+    clog('STORE', '→ loading progress from server...');
+    try {
+      var res = await fetch('/api/progress');
+      clog('STORE', '← server response status:', res.status);
+      if (res.ok) {
+        var data = await res.json();
+        if (data !== null && data !== undefined) {
+          var topics = Object.keys(data);
+          var summary = topics.map(function(t) { return t + ':' + Object.values(data[t].c || {}).filter(Boolean).length + 'c'; }).join(', ');
+          clog('STORE', '✅ loaded from SERVER — topics=[' + summary + ']');
+          return data;
+        }
+        clog('STORE', '→ server returned null — falling back to localStorage');
+      } else {
+        clog('STORE', '❌ server error ' + res.status + ' — falling back to localStorage');
+      }
+    } catch(e) { clog('STORE', '❌ fetch failed — falling back to localStorage. Error:', e.message); }
+    try {
+      var v = localStorage.getItem(_k);
+      if (v) {
+        var ld = JSON.parse(v);
+        var ls = Object.keys(ld).map(function(t) { return t + ':' + Object.values(ld[t].c || {}).filter(Boolean).length + 'c'; }).join(', ');
+        clog('STORE', '✅ loaded from localStorage — topics=[' + ls + ']');
+        return ld;
+      }
+      clog('STORE', '→ localStorage empty — starting fresh');
+      return null;
+    } catch(e) { clog('STORE', '❌ localStorage read failed:', e.message); return null; }
+  },
+  set: async function(_k, v) {
+    var topics = Object.keys(v || {});
+    var summary = topics.map(function(t) { return t + ':' + Object.values((v[t] && v[t].c) || {}).filter(Boolean).length + 'c'; }).join(', ');
+    clog('STORE', '→ saving progress — topics=[' + summary + ']');
+    try {
+      var res = await fetch('/api/progress', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(v) });
+      clog('STORE', '← server save response status:', res.status);
+      if (res.ok) {
+        clog('STORE', '✅ saved to SERVER successfully');
+        try { localStorage.setItem(_k, JSON.stringify(v)); clog('STORE', '✅ also backed up to localStorage'); } catch(e) {}
+        return;
+      }
+      clog('STORE', '❌ server save failed (status ' + res.status + ') — falling back to localStorage');
+    } catch(e) { clog('STORE', '❌ server save fetch failed — falling back to localStorage. Error:', e.message); }
+    try { localStorage.setItem(_k, JSON.stringify(v)); clog('STORE', '✅ saved to localStorage (offline fallback)'); } catch(e) { clog('STORE', '❌ localStorage save also failed:', e.message); }
+  }
 };
 
 // ── ALL STUDY DATA ────────────────────────────────────────────────────────
@@ -705,36 +754,62 @@ export default function App() {
   var authLoadState = useState(false), authLoading = authLoadState[0], setAuthLoading = authLoadState[1];
 
   useEffect(function() {
+    clog('APP', '→ app mounted — loading progress...');
     store.get(SKEY).then(function(saved) {
-      if (saved) setProg(mergeProg(initProg(), saved));
+      if (saved) {
+        clog('APP', '✅ progress loaded — merging into state');
+        setProg(mergeProg(initProg(), saved));
+      } else {
+        clog('APP', '→ no saved progress found — using fresh state');
+      }
       setReady(true);
     });
   }, []);
-  useEffect(function() { if (ready) store.set(SKEY, prog); }, [prog, ready]);
+  useEffect(function() {
+    if (ready) {
+      clog('APP', '→ progress changed — triggering save...');
+      store.set(SKEY, prog);
+    }
+  }, [prog, ready]);
 
   // Verify stored token on load
   useEffect(function() {
     var t = localStorage.getItem('sde3_auth_token');
-    if (!t) return;
+    if (!t) { clog('AUTH', '→ no stored token found'); return; }
+    clog('AUTH', '→ found stored token — verifying with server...');
     fetch('/api/auth/verify', { headers: { 'Authorization': 'Bearer ' + t } })
-      .then(function(r) { if (r.ok) setIsAuthenticated(true); else { localStorage.removeItem('sde3_auth_token'); setToken(null); } })
-      .catch(function() {});
+      .then(function(r) {
+        clog('AUTH', '← verify response status:', r.status);
+        if (r.ok) { clog('AUTH', '✅ token valid — user authenticated'); setIsAuthenticated(true); }
+        else { clog('AUTH', '❌ token invalid/expired — clearing'); localStorage.removeItem('sde3_auth_token'); setToken(null); }
+      })
+      .catch(function(e) { clog('AUTH', '❌ verify fetch failed:', e.message); });
   }, []);
 
   var openAuthModal = useCallback(function() { setShowAuthModal(true); setPinInput(''); setAuthError(''); }, []);
   var handleLogin = useCallback(function(pin) {
+    clog('AUTH', '→ login attempt — PIN length:', String(pin).length);
     setAuthLoading(true);
     fetch('/api/auth/login', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ pin: pin }) })
-      .then(function(r) { if (!r.ok) throw new Error('bad'); return r.json(); })
-      .then(function(d) { localStorage.setItem('sde3_auth_token', d.token); setToken(d.token); setIsAuthenticated(true); setShowAuthModal(false); setAuthLoading(false); })
-      .catch(function() { setAuthError('Invalid PIN'); setAuthLoading(false); });
+      .then(function(r) {
+        clog('AUTH', '← login response status:', r.status);
+        if (!r.ok) throw new Error('status ' + r.status);
+        return r.json();
+      })
+      .then(function(d) {
+        clog('AUTH', '✅ login successful — token received, storing');
+        localStorage.setItem('sde3_auth_token', d.token); setToken(d.token); setIsAuthenticated(true); setShowAuthModal(false); setAuthLoading(false);
+      })
+      .catch(function(e) { clog('AUTH', '❌ login failed:', e.message); setAuthError('Invalid PIN'); setAuthLoading(false); });
   }, []);
-  var handleLogout = useCallback(function() { localStorage.removeItem('sde3_auth_token'); setToken(null); setIsAuthenticated(false); }, []);
+  var handleLogout = useCallback(function() { clog('AUTH', '→ logout'); localStorage.removeItem('sde3_auth_token'); setToken(null); setIsAuthenticated(false); }, []);
 
   var toggleConcept = useCallback(function(nid, term) {
-    setProg(function(p) { var nc2 = Object.assign({}, p[nid].c); nc2[term] = !nc2[term]; return Object.assign({}, p, { [nid]: Object.assign({}, p[nid], { c: nc2 }) }); });
+    clog('PROGRESS', '→ toggle concept — topic=' + nid + ', concept="' + term + '"');
+    setProg(function(p) { var nc2 = Object.assign({}, p[nid].c); nc2[term] = !nc2[term]; clog('PROGRESS', '→ concept "' + term + '" set to', nc2[term]); return Object.assign({}, p, { [nid]: Object.assign({}, p[nid], { c: nc2 }) }); });
   }, []);
   var toggleKP = useCallback(function(nid, i) {
+    clog('PROGRESS', '→ toggle key point — topic=' + nid + ', index=' + i);
     setProg(function(p) { return Object.assign({}, p, { [nid]: Object.assign({}, p[nid], { k: p[nid].k.map(function(v, j) { return j === i ? !v : v; }) }) }); });
   }, []);
 

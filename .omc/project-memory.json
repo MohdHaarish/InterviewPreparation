@@ -74,14 +74,14 @@
   "hotPaths": [
     {
       "path": "sde3-prep\\src\\App.jsx",
-      "accessCount": 7,
-      "lastAccessed": 1774774251473,
+      "accessCount": 12,
+      "lastAccessed": 1774776125853,
       "type": "directory"
     },
     {
       "path": "sde3-prep\\server.js",
-      "accessCount": 1,
-      "lastAccessed": 1774774099750,
+      "accessCount": 3,
+      "lastAccessed": 1774776064046,
       "type": "file"
     },
     {
@@ -100,6 +100,18 @@
       "path": "sde3-prep\\vite.config.js",
       "accessCount": 1,
       "lastAccessed": 1774774172118,
+      "type": "file"
+    },
+    {
+      "path": "sde3-prep\\.env",
+      "accessCount": 1,
+      "lastAccessed": 1774775285860,
+      "type": "file"
+    },
+    {
+      "path": "sde3-prep\\generate-pin-hash.js",
+      "accessCount": 1,
+      "lastAccessed": 1774775286108,
       "type": "file"
     }
   ],
