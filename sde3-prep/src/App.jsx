@@ -824,10 +824,11 @@ export default function App() {
   // ── Auth state ──────────────────────────────────────────────────────────
   var tkState  = useState(function() { return localStorage.getItem('sde3_auth_token') || null; }), token = tkState[0], setToken = tkState[1];
   var authState = useState(false), isAuthenticated = authState[0], setIsAuthenticated = authState[1];
-  var authModalState = useState(false), showAuthModal = authModalState[0], setShowAuthModal = authModalState[1];
+  var authModalState = useState(false), setShowAuthModal = authModalState[1];
   var pinState = useState(''), pinInput = pinState[0], setPinInput = pinState[1];
   var authErrState = useState(''), authError = authErrState[0], setAuthError = authErrState[1];
   var authLoadState = useState(false), authLoading = authLoadState[0], setAuthLoading = authLoadState[1];
+  var verifyingState = useState(true), verifying = verifyingState[0], setVerifying = verifyingState[1];
 
   useEffect(function() {
     clog('APP', '→ app mounted — loading progress...');
@@ -851,15 +852,16 @@ export default function App() {
   // Verify stored token on load
   useEffect(function() {
     var t = localStorage.getItem('sde3_auth_token');
-    if (!t) { clog('AUTH', '→ no stored token found'); return; }
+    if (!t) { clog('AUTH', '→ no stored token found'); setVerifying(false); return; }
     clog('AUTH', '→ found stored token — verifying with server...');
     fetch('/api/auth/verify', { headers: { 'Authorization': 'Bearer ' + t } })
       .then(function(r) {
         clog('AUTH', '← verify response status:', r.status);
         if (r.ok) { clog('AUTH', '✅ token valid — user authenticated'); setIsAuthenticated(true); }
         else { clog('AUTH', '❌ token invalid/expired — clearing'); localStorage.removeItem('sde3_auth_token'); setToken(null); }
+        setVerifying(false);
       })
-      .catch(function(e) { clog('AUTH', '❌ verify fetch failed:', e.message); });
+      .catch(function(e) { clog('AUTH', '❌ verify fetch failed:', e.message); setVerifying(false); });
   }, []);
 
   var openAuthModal = useCallback(function() { setShowAuthModal(true); setPinInput(''); setAuthError(''); }, []);
@@ -899,6 +901,35 @@ export default function App() {
   var nodeIdx = node ? NODES.findIndex(function(n) { return n.id === node.id; }) : 0;
   var nc      = T.nc[nodeIdx] || T.accent;
   var ns      = node ? nodeStats(prog, node) : null;
+
+  if (verifying) return (
+    <div style={{ display:"flex", alignItems:"center", justifyContent:"center", minHeight:"100vh", background:T.bg, fontFamily:"Inter,system-ui,sans-serif" }}>
+      <div style={{ fontSize:13, color:T.text3 }}>Verifying…</div>
+    </div>
+  );
+
+  if (!isAuthenticated) return (
+    <div style={{ display:"flex", alignItems:"center", justifyContent:"center", minHeight:"100vh", background:T.bg, fontFamily:"Inter,system-ui,sans-serif" }}>
+      <div style={{ background:T.card, border:"1px solid " + T.border, borderRadius:12, padding:"32px 36px", textAlign:"center", maxWidth:340, width:"90%" }}>
+        <div style={{ fontSize:20, fontWeight:700, color:T.text, marginBottom:8 }}>🔐 SDE 3 Prep</div>
+        <div style={{ fontSize:13, color:T.text3, marginBottom:20, lineHeight:1.6 }}>Enter your PIN to access.</div>
+        <input
+          type="password"
+          placeholder="Enter PIN"
+          value={pinInput}
+          onChange={function(e) { setPinInput(e.target.value); setAuthError(''); }}
+          onKeyDown={function(e) { if (e.key === 'Enter' && pinInput) handleLogin(pinInput); }}
+          autoFocus
+          style={{ width:"100%", padding:"9px 12px", fontSize:13, borderRadius:7, border:"1.5px solid " + (authError ? "#ef4444" : T.border), background:T.bg, color:T.text, outline:"none", fontFamily:"inherit", marginBottom:authError ? 6 : 16, boxSizing:"border-box" }}
+        />
+        {authError && <div style={{ fontSize:11, color:"#ef4444", marginBottom:12 }}>{authError}</div>}
+        <button onClick={function() { if (pinInput) handleLogin(pinInput); }} disabled={authLoading}
+          style={{ width:"100%", padding:"9px 22px", cursor:"pointer", borderRadius:6, background:T.accent, border:"none", color:"#fff", fontFamily:"inherit", fontSize:14, fontWeight:600, opacity:authLoading ? 0.7 : 1 }}>
+          {authLoading ? "Signing in…" : "Sign In"}
+        </button>
+      </div>
+    </div>
+  );
 
   return (
     <div style={{ background:T.bg, minHeight:"100vh", fontFamily:"Inter,system-ui,sans-serif", color:T.text }}>
@@ -993,35 +1024,6 @@ export default function App() {
         </div>
       )}
 
-      {/* PIN AUTH MODAL */}
-      {showAuthModal && (
-        <div style={{ position:"fixed", inset:0, background:T.isDark?"rgba(0,0,0,0.75)":"rgba(15,23,42,0.4)", zIndex:999, display:"flex", alignItems:"center", justifyContent:"center" }}>
-          <div style={{ background:T.card, border:"1px solid " + T.border, borderRadius:12, padding:"26px 30px", textAlign:"center", maxWidth:320, width:"90%" }}>
-            <div style={{ fontSize:16, fontWeight:700, color:T.text, marginBottom:6 }}>🔐 Notes Sign In</div>
-            <div style={{ fontSize:12, color:T.text3, marginBottom:18, lineHeight:1.6 }}>Enter your PIN to sync notes across devices.</div>
-            <input
-              type="password"
-              placeholder="Enter PIN"
-              value={pinInput}
-              onChange={function(e) { setPinInput(e.target.value); setAuthError(''); }}
-              onKeyDown={function(e) { if (e.key === 'Enter' && pinInput) handleLogin(pinInput); }}
-              autoFocus
-              style={{ width:"100%", padding:"9px 12px", fontSize:13, borderRadius:7, border:"1.5px solid " + (authError ? "#ef4444" : T.border), background:T.bg, color:T.text, outline:"none", fontFamily:"inherit", marginBottom: authError ? 6 : 16, boxSizing:"border-box" }}
-            />
-            {authError && <div style={{ fontSize:11, color:"#ef4444", marginBottom:12 }}>{authError}</div>}
-            <div style={{ display:"flex", gap:10, justifyContent:"center" }}>
-              <button onClick={function() { if (pinInput) handleLogin(pinInput); }} disabled={authLoading}
-                style={{ padding:"8px 22px", cursor:"pointer", borderRadius:6, background:T.accent, border:"none", color:"#fff", fontFamily:"inherit", fontSize:13, fontWeight:600, opacity:authLoading?0.7:1 }}>
-                {authLoading ? "Signing in…" : "Sign In"}
-              </button>
-              <button onClick={function() { setShowAuthModal(false); }}
-                style={{ padding:"8px 16px", cursor:"pointer", borderRadius:6, background:T.muted, border:"1px solid " + T.border2, color:T.text3, fontFamily:"inherit", fontSize:12 }}>
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       <div style={{ display:"flex", flexWrap:"wrap", minHeight:"calc(100vh - 128px)" }}>
 
